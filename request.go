@@ -3,6 +3,7 @@ package httpexpect
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"github.com/ajg/form"
 	"github.com/fatih/structs"
@@ -454,6 +455,33 @@ func (r *Request) WithJSON(object interface{}) *Request {
 
 	r.setType("WithJSON", "application/json; charset=utf-8", false)
 	r.setBody("WithJSON", bytes.NewReader(b), len(b), false)
+
+	return r
+}
+
+// WithXML sets Content-Type header to "application/xml; charset=utf-8"
+// and sets body to object, marshaled using xml.Marshal().
+//
+// Example:
+//  type MyXML struct {
+//      XMLName xml.Name
+//      Foo     int      `xml:"foo"`
+//  }
+//
+//  req := NewRequest(config, "PUT", "http://example.org/path")
+//  req.WithXML(MyXML{
+//      XMLName: xml.Name{Local: "root", Space: "ns"},
+//      Foo:     123,
+//  })
+func (r *Request) WithXML(object interface{}) *Request {
+	b, err := xml.Marshal(object)
+	if err != nil {
+		r.chain.fail(err.Error())
+		return r
+	}
+
+	r.setType("WithXML", "application/xml; charset=utf-8", false)
+	r.setBody("WithXML", bytes.NewReader(b), len(b), false)
 
 	return r
 }

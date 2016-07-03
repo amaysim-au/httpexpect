@@ -3,6 +3,7 @@ package httpexpect
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"github.com/stretchr/testify/assert"
 	"io/ioutil"
@@ -879,6 +880,46 @@ func TestRequestBodyJSON(t *testing.T) {
 	assert.Equal(t, &client.resp, resp.Raw())
 }
 
+func TestRequestBodyXML(t *testing.T) {
+	client := &mockClient{}
+
+	reporter := newMockReporter(t)
+
+	config := Config{
+		Client:   client,
+		Reporter: reporter,
+	}
+
+	expectedHeaders := map[string][]string{
+		"Content-Type": {"application/xml; charset=utf-8"},
+		"Some-Header":  {"foo"},
+	}
+
+	req := NewRequest(config, "METHOD", "url")
+
+	req.WithHeaders(map[string]string{
+		"Some-Header": "foo",
+	})
+
+	type XS struct {
+		XMLName xml.Name
+		Key     string `xml:"key"`
+	}
+
+	req.WithXML(XS{xml.Name{Local: "root", Space: "ns"}, "value"})
+
+	resp := req.Expect()
+	resp.chain.assertOK(t)
+
+	assert.Equal(t, "METHOD", client.req.Method)
+	assert.Equal(t, "url", client.req.URL.String())
+	assert.Equal(t, http.Header(expectedHeaders), client.req.Header)
+	assert.Equal(t, `<root xmlns="ns"><key>value</key></root>`,
+		string(resp.content))
+
+	assert.Equal(t, &client.resp, resp.Raw())
+}
+
 func TestRequestContentLength(t *testing.T) {
 	client := &mockClient{}
 
@@ -910,21 +951,31 @@ func TestRequestContentLength(t *testing.T) {
 	req4.Expect().chain.assertOK(t)
 	assert.Equal(t, int64(len(j)), client.req.ContentLength)
 
-	f := `a=b`
-	req5 := NewRequest(config, "METHOD", "url")
-	req5.WithForm(map[string]string{"a": "b"})
-	req5.Expect().chain.assertOK(t)
-	assert.Equal(t, int64(len(f)), client.req.ContentLength)
+	type XS struct {
+		Key string
+	}
 
+	x, _ := xml.Marshal(XS{"value"})
+	req5 := NewRequest(config, "METHOD", "url")
+	req5.WithXML(XS{"value"})
+	req5.Expect().chain.assertOK(t)
+	assert.Equal(t, int64(len(x)), client.req.ContentLength)
+
+	f := `a=b`
 	req6 := NewRequest(config, "METHOD", "url")
-	req6.WithFormField("a", "b")
+	req6.WithForm(map[string]string{"a": "b"})
 	req6.Expect().chain.assertOK(t)
 	assert.Equal(t, int64(len(f)), client.req.ContentLength)
 
 	req7 := NewRequest(config, "METHOD", "url")
-	req7.WithMultipart()
-	req7.WithFileBytes("a", "b", []byte("12345"))
+	req7.WithFormField("a", "b")
 	req7.Expect().chain.assertOK(t)
+	assert.Equal(t, int64(len(f)), client.req.ContentLength)
+
+	req8 := NewRequest(config, "METHOD", "url")
+	req8.WithMultipart()
+	req8.WithFileBytes("a", "b", []byte("12345"))
+	req8.Expect().chain.assertOK(t)
 	assert.True(t, client.req.ContentLength > 0)
 }
 
@@ -950,6 +1001,10 @@ func TestRequestContentTypeOverwrite(t *testing.T) {
 	req2.Expect().chain.assertOK(t)
 	assert.Equal(t, http.Header{"Content-Type": {"foo"}}, client.req.Header)
 
+	type XS struct {
+		Key string
+	}
+
 	req3 := NewRequest(config, "METHOD", "url")
 	req3.WithJSON(map[string]interface{}{"a": "b"})
 	req3.WithHeader("Content-Type", "foo")
@@ -958,18 +1013,25 @@ func TestRequestContentTypeOverwrite(t *testing.T) {
 	assert.Equal(t, http.Header{"Content-Type": {"foo", "bar"}}, client.req.Header)
 
 	req4 := NewRequest(config, "METHOD", "url")
-	req4.WithForm(map[string]interface{}{"a": "b"})
+	req4.WithXML(XS{"value"})
 	req4.WithHeader("Content-Type", "foo")
 	req4.WithHeader("Content-Type", "bar")
 	req4.Expect().chain.assertOK(t)
 	assert.Equal(t, http.Header{"Content-Type": {"foo", "bar"}}, client.req.Header)
 
 	req5 := NewRequest(config, "METHOD", "url")
-	req5.WithMultipart()
 	req5.WithForm(map[string]interface{}{"a": "b"})
 	req5.WithHeader("Content-Type", "foo")
 	req5.WithHeader("Content-Type", "bar")
 	req5.Expect().chain.assertOK(t)
+	assert.Equal(t, http.Header{"Content-Type": {"foo", "bar"}}, client.req.Header)
+
+	req6 := NewRequest(config, "METHOD", "url")
+	req6.WithMultipart()
+	req6.WithForm(map[string]interface{}{"a": "b"})
+	req6.WithHeader("Content-Type", "foo")
+	req6.WithHeader("Content-Type", "bar")
+	req6.Expect().chain.assertOK(t)
 	assert.Equal(t, http.Header{"Content-Type": {"foo", "bar"}}, client.req.Header)
 }
 
@@ -1006,6 +1068,26 @@ func TestRequestErrorMarshalJSON(t *testing.T) {
 	req := NewRequest(config, "METHOD", "url")
 
 	req.WithJSON(func() {})
+
+	resp := req.Expect()
+	resp.chain.assertFailed(t)
+
+	assert.True(t, resp.Raw() == nil)
+}
+
+func TestRequestErrorMarshalXML(t *testing.T) {
+	client := &mockClient{}
+
+	reporter := newMockReporter(t)
+
+	config := Config{
+		Client:   client,
+		Reporter: reporter,
+	}
+
+	req := NewRequest(config, "METHOD", "url")
+
+	req.WithXML(func() {})
 
 	resp := req.Expect()
 	resp.chain.assertFailed(t)
@@ -1068,6 +1150,10 @@ func TestRequestErrorConflictBody(t *testing.T) {
 		Reporter: reporter,
 	}
 
+	type XS struct {
+		Key string
+	}
+
 	req1 := NewRequest(config, "METHOD", "url")
 	req1.WithChunked(nil)
 	req1.chain.assertOK(t)
@@ -1095,22 +1181,28 @@ func TestRequestErrorConflictBody(t *testing.T) {
 	req5 := NewRequest(config, "METHOD", "url")
 	req5.WithChunked(nil)
 	req5.chain.assertOK(t)
-	req5.WithForm(map[string]interface{}{"a": "b"})
-	req5.Expect()
+	req5.WithXML(XS{"value"})
 	req5.chain.assertFailed(t)
 
 	req6 := NewRequest(config, "METHOD", "url")
 	req6.WithChunked(nil)
 	req6.chain.assertOK(t)
-	req6.WithFormField("a", "b")
+	req6.WithForm(map[string]interface{}{"a": "b"})
 	req6.Expect()
 	req6.chain.assertFailed(t)
 
 	req7 := NewRequest(config, "METHOD", "url")
 	req7.WithChunked(nil)
 	req7.chain.assertOK(t)
-	req7.WithMultipart()
+	req7.WithFormField("a", "b")
+	req7.Expect()
 	req7.chain.assertFailed(t)
+
+	req8 := NewRequest(config, "METHOD", "url")
+	req8.WithChunked(nil)
+	req8.chain.assertOK(t)
+	req8.WithMultipart()
+	req8.chain.assertFailed(t)
 }
 
 func TestRequestErrorConflictType(t *testing.T) {
@@ -1125,6 +1217,10 @@ func TestRequestErrorConflictType(t *testing.T) {
 		Reporter: reporter,
 	}
 
+	type XS struct {
+		Key string
+	}
+
 	req1 := NewRequest(config, "METHOD", "url")
 	req1.WithText("")
 	req1.chain.assertOK(t)
@@ -1134,20 +1230,26 @@ func TestRequestErrorConflictType(t *testing.T) {
 	req2 := NewRequest(config, "METHOD", "url")
 	req2.WithText("")
 	req2.chain.assertOK(t)
-	req2.WithForm(map[string]interface{}{"a": "b"})
+	req2.WithXML(XS{"value"})
 	req2.chain.assertFailed(t)
 
 	req3 := NewRequest(config, "METHOD", "url")
 	req3.WithText("")
 	req3.chain.assertOK(t)
-	req3.WithFormField("a", "b")
+	req3.WithForm(map[string]interface{}{"a": "b"})
 	req3.chain.assertFailed(t)
 
 	req4 := NewRequest(config, "METHOD", "url")
 	req4.WithText("")
 	req4.chain.assertOK(t)
-	req4.WithMultipart()
+	req4.WithFormField("a", "b")
 	req4.chain.assertFailed(t)
+
+	req5 := NewRequest(config, "METHOD", "url")
+	req5.WithText("")
+	req5.chain.assertOK(t)
+	req5.WithMultipart()
+	req5.chain.assertFailed(t)
 }
 
 func TestRequestErrorConflictMultipart(t *testing.T) {
